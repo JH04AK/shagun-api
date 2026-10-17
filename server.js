@@ -20,7 +20,6 @@ const razorpay = new Razorpay({
   key_secret: razorpayKeySecret,
 });
 
-// Health check
 app.get('/', (req, res) => {
   res.json({ status: 'active', platform: 'Shagun Fintech API' });
 });
@@ -28,11 +27,34 @@ app.get('/', (req, res) => {
 // 1. Create Gift Order
 app.post('/api/v1/gifts/create', async (req, res) => {
   try {
-    const { sender_phone, sender_name, recipient_phone, recipient_name, stock_symbol, gift_amount_inr, occasion, message } = req.body;
+    const { 
+      sender_phone, 
+      sender_name, 
+      recipient_phone, 
+      recipient_name, 
+      stock_symbol, 
+      gift_amount_inr, 
+      occasion, 
+      message,
+      quantity // optional if passed from frontend
+    } = req.body;
+
+    // Fallback quantity to 1 if not explicitly calculated or passed
+    const stockQuantity = quantity || 1;
 
     const { data, error } = await supabase
       .from('stock_gifts')
-      .insert([{ sender_phone, sender_name, recipient_phone, recipient_name, stock_symbol, gift_amount_inr, occasion, message }])
+      .insert([{ 
+        sender_phone, 
+        sender_name, 
+        recipient_phone, 
+        recipient_name, 
+        stock_symbol, 
+        gift_amount_inr, 
+        occasion, 
+        message,
+        quantity: stockQuantity
+      }])
       .select();
 
     if (error) throw error;
@@ -42,17 +64,18 @@ app.post('/api/v1/gifts/create', async (req, res) => {
 
     return res.status(201).json({ success: true, order, claim_url });
   } catch (err) {
+    console.error('Database Error:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 2. Create Razorpay Payment Order (Matches exact URL hit by frontend)
+// 2. Create Razorpay Payment Order
 app.post('/api/v1/payments/create-order', async (req, res) => {
   try {
     const { amount_inr, gift_id } = req.body;
 
     if (!razorpayKeyId || !razorpayKeySecret) {
-      return res.status(500).json({ success: false, error: 'Razorpay API keys missing in environment variables' });
+      return res.status(500).json({ success: false, error: 'Razorpay keys missing in environment variables' });
     }
 
     const options = {
@@ -76,7 +99,7 @@ app.post('/api/v1/payments/create-order', async (req, res) => {
   }
 });
 
-// 3. Verify Payment
+// 3. Verify Payment Signature
 app.post('/api/v1/payments/verify', async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, gift_id } = req.body;
@@ -102,7 +125,6 @@ app.post('/api/v1/payments/verify', async (req, res) => {
   }
 });
 
-// Fallback to avoid returning HTML on 404 routes
 app.use((req, res) => {
   res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found on server.` });
 });
