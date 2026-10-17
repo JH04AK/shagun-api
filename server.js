@@ -36,11 +36,12 @@ app.post('/api/v1/gifts/create', async (req, res) => {
       gift_amount_inr, 
       occasion, 
       message,
-      quantity // optional if passed from frontend
+      quantity
     } = req.body;
 
-    // Fallback quantity to 1 if not explicitly calculated or passed
     const stockQuantity = quantity || 1;
+    // Generate unique claim token (e.g., SHAGUN-A1B2C3D4)
+    const claimToken = 'SHAGUN-' + crypto.randomBytes(4).toString('hex').toUpperCase();
 
     const { data, error } = await supabase
       .from('stock_gifts')
@@ -53,14 +54,16 @@ app.post('/api/v1/gifts/create', async (req, res) => {
         gift_amount_inr, 
         occasion, 
         message,
-        quantity: stockQuantity
+        quantity: stockQuantity,
+        claim_token: claimToken,
+        status: 'PENDING'
       }])
       .select();
 
     if (error) throw error;
 
     const order = data[0];
-    const claim_url = `https://jh04ak.github.io/shagun/claim.html?id=${order.id}`;
+    const claim_url = `https://jh04ak.github.io/shagun/claim.html?token=${order.claim_token}`;
 
     return res.status(201).json({ success: true, order, claim_url });
   } catch (err) {
@@ -113,7 +116,7 @@ app.post('/api/v1/payments/verify', async (req, res) => {
     if (expectedSignature === razorpay_signature) {
       await supabase
         .from('stock_gifts')
-        .update({ payment_status: 'PAID', razorpay_payment_id })
+        .update({ status: 'PAID', razorpay_payment_id })
         .eq('id', gift_id);
 
       return res.json({ success: true, message: 'Payment verified successfully!' });
