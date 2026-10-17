@@ -6,17 +6,24 @@ const crypto = require('crypto');
 
 const app = express();
 
-// Explicit CORS Configuration
+// Enable CORS and JSON parsing
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_ANON_KEY || '');
+// Initialize Supabase
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Initialize Razorpay
+const razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
+const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || '',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || '',
+  key_id: razorpayKeyId,
+  key_secret: razorpayKeySecret,
 });
 
+// Root Health Check Route
 app.get('/', (req, res) => {
   res.json({ status: 'active', platform: 'Shagun Fintech API' });
 });
@@ -31,18 +38,15 @@ app.post('/api/v1/gifts/create', async (req, res) => {
       .insert([{ sender_phone, sender_name, recipient_phone, recipient_name, stock_symbol, gift_amount_inr, occasion, message }])
       .select();
 
-    if (error) {
-      console.error('Supabase Error:', error);
-      return res.status(400).json({ success: false, error: error.message });
-    }
+    if (error) throw error;
 
     const order = data[0];
     const claim_url = `https://jh04ak.github.io/shagun/claim.html?id=${order.id}`;
 
-    res.json({ success: true, order, claim_url });
+    return res.json({ success: true, order, claim_url });
   } catch (err) {
-    console.error('Create Gift Server Error:', err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Create Gift Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -51,8 +55,12 @@ app.post('/api/v1/payments/create-order', async (req, res) => {
   try {
     const { amount_inr, gift_id } = req.body;
 
+    if (!razorpayKeyId || !razorpayKeySecret) {
+      return res.status(500).json({ success: false, error: 'Razorpay keys missing in environment' });
+    }
+
     const options = {
-      amount: Math.round(amount_inr * 100),
+      amount: Math.round(amount_inr * 100), // paise
       currency: 'INR',
       receipt: `rcpt_${gift_id.substring(0, 8)}`,
       notes: { gift_id }
@@ -60,16 +68,16 @@ app.post('/api/v1/payments/create-order', async (req, res) => {
 
     const razorpayOrder = await razorpay.orders.create(options);
 
-    res.json({
+    return res.json({
       success: true,
-      key_id: process.env.RAZORPAY_KEY_ID,
+      key_id: razorpayKeyId,
       razorpay_order_id: razorpayOrder.id,
       amount: razorpayOrder.amount,
       currency: razorpayOrder.currency
     });
   } catch (err) {
-    console.error('Razorpay Order Server Error:', err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Razorpay Order Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -80,7 +88,7 @@ app.post('/api/v1/payments/verify', async (req, res) => {
 
     const body = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .createHmac('sha256', razorpayKeySecret)
       .update(body.toString())
       .digest('hex');
 
@@ -95,14 +103,14 @@ app.post('/api/v1/payments/verify', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid payment signature' });
     }
   } catch (err) {
-    console.error('Verify Payment Server Error:', err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Verify Payment Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Catch-all 404 handler for invalid API routes
+// Catch-all route to guarantee JSON for missing routes (avoids HTML 404 pages)
 app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Endpoint not found' });
+  res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found on server.` });
 });
 
 const PORT = process.env.PORT || 10000;
